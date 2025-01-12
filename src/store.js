@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+    import supabase from './supabase';
 
     // Define a function to get the list of Algerian wilayas
     const getAlgerianWilayas = () => [
@@ -220,7 +221,7 @@ import { create } from 'zustand';
     const useStore = create((set) => ({
       users: [
         {
-          id: 9999, // Special ID for the default admin user
+          id: '9999', // Special ID for the default admin user
           fullName: 'Admin User',
           phoneNumber: '0000000000',
           password: 'adminpassword', // In a real app, hash the password!
@@ -290,195 +291,476 @@ import { create } from 'zustand';
       setLanguage: (lang) => set({ language: lang }),
       t: (key) => translations[useStore.getState().language][key],
       user: null,
-      registerUser: (userData) => {
+
+      // Fetch initial data from Supabase
+      async initializeStore() {
+        const { data: users, error: usersError } = await supabase
+          .from('users')
+          .select('*');
+        if (usersError) {
+          console.error('Error fetching users:', usersError);
+        }
+
+        const { data: pendingProviders, error: pendingProvidersError } = await supabase
+          .from('pending_providers')
+          .select('*');
+        if (pendingProvidersError) {
+          console.error('Error fetching pending providers:', pendingProvidersError);
+        }
+
+        const { data: attendedPatients, error: attendedPatientsError } = await supabase
+          .from('attended_patients')
+          .select('*');
+        if (attendedPatientsError) {
+          console.error('Error fetching attended patients:', attendedPatientsError);
+        }
+
+        const { data: providerHistory, error: providerHistoryError } = await supabase
+          .from('provider_history')
+          .select('*');
+        if (providerHistoryError) {
+          console.error('Error fetching provider history:', providerHistoryError);
+        }
+
+        set({
+          users: users || [],
+          pendingProviders: pendingProviders || [],
+          attendedPatients: attendedPatients || [],
+          providerHistory: providerHistory || [],
+        });
+      },
+
+      registerUser: async (userData) => {
+        const { data, error } = await supabase.auth.signUp({
+          email: userData.phoneNumber + '@sahtifirst.com', // Create a dummy email for now
+          password: userData.password,
+          options: {
+            data: {
+              full_name: userData.fullName,
+              phone_number: userData.phoneNumber,
+              age: userData.age,
+              wilaya: userData.wilaya,
+              role: userData.role,
+              provider_type: userData.providerType,
+              specialty: userData.specialty,
+            }
+          }
+        });
+      
+        if (error) {
+          console.error('Error during registration:', error);
+          throw error;
+        }
+      
         if (userData.role === 'provider') {
-          // Add provider to pendingProviders
-          set((state) => ({
-            pendingProviders: [
-              ...state.pendingProviders,
+          const { error: insertError } = await supabase
+            .from('pending_providers')
+            .insert([
               {
-                ...userData,
-                id: Date.now(),
-                isAvailable: false,
+                id: data.user.id, // Use Supabase auth user ID
+                full_name: userData.fullName,
+                phone_number: userData.phoneNumber,
+                age: userData.age,
+                wilaya: userData.wilaya,
+                role: userData.role,
+                provider_type: userData.providerType,
+                specialty: userData.specialty,
               },
-            ],
-          }));
-        } else {
-          // Add other users (patients, admin) to users
-          set((state) => ({
-            users: [
-              ...state.users,
+            ]);
+      
+          if (insertError) {
+            console.error('Error adding provider to pending_providers:', insertError);
+            throw insertError;
+          }
+        } else if (userData.role === 'patient' || userData.role === 'admin') {
+          const { error: insertError } = await supabase
+            .from('users')
+            .insert([
               {
-                ...userData,
-                id: Date.now(),
+                id: data.user.id, // Use Supabase auth user ID
+                full_name: userData.fullName,
+                phone_number: userData.phoneNumber,
+                age: userData.age,
+                wilaya: userData.wilaya,
+                role: userData.role,
               },
-            ],
-          }));
+            ]);
+      
+          if (insertError) {
+            console.error('Error adding user to users:', insertError);
+            throw insertError;
+          }
         }
+      
+        return data;
       },
-      loginUser: (phoneNumber, password, role) => {
-        const { users, pendingProviders } = useStore.getState();
-        let user = null;
 
-        if (role === 'provider') {
-          // Check if the provider is approved
-          user = users.find(
-            (u) => u.phoneNumber === phoneNumber && u.password === password && u.role === role
-          );
-        } else {
-          // For patients and admin, check the users array directly
-          user = users.find(
-            (u) => u.phoneNumber === phoneNumber && u.password === password && u.role === role
-          );
+      loginUser: async (phoneNumber, password, role) => {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: phoneNumber + '@sahtifirst.com', // Use the dummy email format
+          password: password,
+        });
+      
+        if (error) {
+          console.error('Error during login:', error);
+          throw error;
         }
-
-        if (user) {
-          set({ user });
+      
+        if (data.user) {
+          // Fetch user data based on the role
+          let user = null;
+          if (role === 'provider') {
+            const { data: providerData, error: providerError } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', data.user.id)
+              .eq('role', 'provider')
+              .single();
+      
+            if (providerError) {
+              console.error('Error fetching provider data:', providerError);
+              throw providerError;
+            }
+            user = providerData;
+          } else {
+            const { data: userData, error: userError } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', data.user.id)
+              .eq('role', role)
+              .single();
+      
+            if (userError) {
+              console.error('Error fetching user data:', userError);
+              throw userError;
+            }
+            user = userData;
+          }
+      
+          if (user) {
+            set({ user });
+            return user;
+          } else {
+            throw new Error('User not found or not approved.');
+          }
         }
-
-        return user;
+      
+        return null;
       },
-      sendRequest: (patient, providerType, specialty) =>
-        set((state) => {
-          const availableProviders = state.users.filter(
-            (provider) =>
-              provider.role === 'provider' &&
-              provider.providerType === providerType &&
-              provider.specialty === specialty &&
-              provider.wilaya.includes(patient.wilaya) && // Filter by wilaya
-              provider.isAvailable
-          );
-          const newNotifications = availableProviders.map((provider) => ({
-            id: Date.now(),
-            providerId: provider.id,
-            patientId: patient.id,
-            message: `New request from ${patient.fullName} for ${specialty}`,
-          }));
-          return {
-            notifications: [...state.notifications, ...newNotifications],
-          };
-        }),
-      toggleAvailability: () =>
+
+      sendRequest: async (patient, providerType, specialty) => {
+        // Fetch available providers from Supabase
+        const { data: availableProviders, error } = await supabase
+          .from('users')
+          .select('*')
+          .eq('role', 'provider')
+          .eq('provider_type', providerType)
+          .eq('specialty', specialty)
+          .eq('wilaya', patient.wilaya)
+          .eq('is_available', true);
+      
+        if (error) {
+          console.error('Error fetching available providers:', error);
+          throw error;
+        }
+      
+        if (availableProviders.length === 0) {
+          console.warn('No available providers found for this specialty and wilaya.');
+          return; // Or handle it in another appropriate way
+        }
+      
+        // Create new notifications for each available provider
+        const newNotifications = availableProviders.map((provider) => ({
+          provider_id: provider.id,
+          patient_id: patient.id,
+          message: `New request from ${patient.full_name} for ${specialty}`,
+        }));
+      
+        const { error: insertError } = await supabase
+          .from('notifications')
+          .insert(newNotifications);
+      
+        if (insertError) {
+          console.error('Error inserting new notifications:', insertError);
+          throw insertError;
+        }
+      
+        // Update the store state
+        set((state) => ({
+          notifications: [...state.notifications, ...newNotifications],
+        }));
+      },
+
+      toggleAvailability: async () => {
         set((state) => {
           const updatedUser = state.user
-            ? { ...state.user, isAvailable: !state.user.isAvailable }
+            ? { ...state.user, is_available: !state.user.is_available }
             : null;
-
+      
           if (updatedUser) {
             const historyEntry = {
               id: Date.now(),
               providerId: updatedUser.id,
-              providerName: updatedUser.fullName,
+              providerName: updatedUser.full_name,
               date: new Date().toLocaleDateString(),
-              action: updatedUser.isAvailable
+              action: updatedUser.is_available
                 ? 'Became Available'
                 : 'Became Unavailable',
-              details: `Provider ${updatedUser.fullName} ${
-                updatedUser.isAvailable ? 'is now available' : 'is now unavailable'
+              details: `Provider ${updatedUser.full_name} ${
+                updatedUser.is_available ? 'is now available' : 'is now unavailable'
               }`,
             };
-
+      
+            // Update availability in Supabase
+            supabase
+              .from('users')
+              .update({ is_available: updatedUser.is_available })
+              .eq('id', updatedUser.id)
+              .then(({ error }) => {
+                if (error) {
+                  console.error('Error updating availability:', error);
+                }
+              });
+      
+            // Add history entry in Supabase
+            supabase
+              .from('provider_history')
+              .insert([historyEntry])
+              .then(({ error }) => {
+                if (error) {
+                  console.error('Error adding provider history entry:', error);
+                }
+              });
+      
             return {
               user: updatedUser,
               providerHistory: [...state.providerHistory, historyEntry],
             };
           }
-
+      
           return {};
         }),
-      acceptRequest: (request) =>
-        set((state) => {
-          const patient = state.users.find((u) => u.id === request.patientId);
-          const provider = state.users.find((u) => u.id === request.providerId);
+      },
 
-          // Remove the notification for this request from all providers
-          const updatedNotifications = state.notifications.filter(
-            (n) => n.patientId !== request.patientId
-          );
+      acceptRequest: async (request) => {
+        const { data: patientData, error: patientError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', request.patientId)
+          .single();
+      
+        if (patientError) {
+          console.error('Error fetching patient data:', patientError);
+          throw patientError;
+        }
+      
+        const { data: providerData, error: providerError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', request.providerId)
+          .single();
+      
+        if (providerError) {
+          console.error('Error fetching provider data:', providerError);
+          throw providerError;
+        }
+      
+        // Add an entry to the attended_patients table
+        const attendedPatient = {
+          patient_id: request.patientId,
+          provider_id: request.providerId,
+          provider_name: providerData.full_name,
+          date: new Date().toLocaleDateString(),
+          rating: null, // Initially, the rating is null
+        };
+      
+        const { error: attendedError } = await supabase
+          .from('attended_patients')
+          .insert([attendedPatient]);
+      
+        if (attendedError) {
+          console.error('Error adding attended patient:', attendedError);
+          throw attendedError;
+        }
+      
+        // Remove the notification for this request from all providers
+        const { error: deleteError } = await supabase
+          .from('notifications')
+          .delete()
+          .eq('patient_id', request.patientId);
+      
+        if (deleteError) {
+          console.error('Error deleting notifications:', deleteError);
+          throw deleteError;
+        }
+      
+        // Add an entry to the provider history
+        const historyEntry = {
+          providerId: providerData.id,
+          providerName: providerData.full_name,
+          date: new Date().toLocaleDateString(),
+          action: 'Accepted Request',
+          details: `Provider ${providerData.full_name} accepted a request from ${patientData.full_name}`,
+        };
+      
+        const { error: historyError } = await supabase
+          .from('provider_history')
+          .insert([historyEntry]);
+      
+        if (historyError) {
+          console.error('Error adding provider history entry:', historyError);
+          throw historyError;
+        }
+      
+        // Update the store state
+        set((state) => ({
+          attendedPatients: [...state.attendedPatients, attendedPatient],
+          notifications: state.notifications.filter((n) => n.patientId !== request.patientId),
+          providerHistory: [...state.providerHistory, historyEntry],
+        }));
+      },
 
-          const attendedPatient = {
-            ...patient,
-            provider: provider.fullName,
-            date: new Date().toLocaleDateString(),
-            rating: null,
-          };
+      approveProvider: async (providerId) => {
+        // Fetch the provider from pending_providers
+        const { data: provider, error: fetchError } = await supabase
+          .from('pending_providers')
+          .select('*')
+          .eq('id', providerId)
+          .single();
+      
+        if (fetchError) {
+          console.error('Error fetching provider:', fetchError);
+          throw fetchError;
+        }
+      
+        if (!provider) {
+          console.error('Provider not found in pending_providers');
+          return;
+        }
+      
+        // Add the provider to the users table
+        const { error: insertError } = await supabase
+          .from('users')
+          .insert([
+            {
+              ...provider,
+              is_available: false, // Set initial availability to false
+            },
+          ]);
+      
+        if (insertError) {
+          console.error('Error adding provider to users:', insertError);
+          throw insertError;
+        }
+      
+        // Remove the provider from pending_providers
+        const { error: deleteError } = await supabase
+          .from('pending_providers')
+          .delete()
+          .eq('id', providerId);
+      
+        if (deleteError) {
+          console.error('Error removing provider from pending_providers:', deleteError);
+          throw deleteError;
+        }
+      
+        // Add an entry to the provider history
+        const historyEntry = {
+          providerId: provider.id,
+          providerName: provider.full_name,
+          date: new Date().toLocaleDateString(),
+          action: 'Approved',
+          details: `Provider ${provider.full_name}'s application was approved`,
+        };
+      
+        const { error: historyError } = await supabase
+          .from('provider_history')
+          .insert([historyEntry]);
+      
+        if (historyError) {
+          console.error('Error adding provider history entry:', historyError);
+          throw historyError;
+        }
+      
+        // Update the store state
+        set((state) => ({
+          users: [...state.users, provider],
+          pendingProviders: state.pendingProviders.filter((p) => p.id !== providerId),
+          providerHistory: [...state.providerHistory, historyEntry],
+        }));
+      },
 
-          // Add an entry to the provider history
-          const historyEntry = {
-            id: Date.now(),
-            providerId: provider.id,
-            providerName: provider.fullName,
-            date: new Date().toLocaleDateString(),
-            action: 'Accepted Request',
-            details: `Provider ${provider.fullName} accepted a request from ${patient.fullName}`,
-          };
+      rejectProvider: async (providerId) => {
+        // Fetch the provider from pending_providers
+        const { data: provider, error: fetchError } = await supabase
+          .from('pending_providers')
+          .select('full_name')
+          .eq('id', providerId)
+          .single();
+      
+        if (fetchError) {
+          console.error('Error fetching provider:', fetchError);
+          throw fetchError;
+        }
+      
+        if (!provider) {
+          console.error('Provider not found in pending_providers');
+          return;
+        }
+      
+        // Remove the provider from pending_providers
+        const { error: deleteError } = await supabase
+          .from('pending_providers')
+          .delete()
+          .eq('id', providerId);
+      
+        if (deleteError) {
+          console.error('Error removing provider from pending_providers:', deleteError);
+          throw deleteError;
+        }
+      
+        // Add an entry to the provider history
+        const historyEntry = {
+          providerId: providerId,
+          providerName: provider.full_name,
+          date: new Date().toLocaleDateString(),
+          action: 'Rejected',
+          details: `Provider ${provider.full_name}'s application was rejected`,
+        };
+      
+        const { error: historyError } = await supabase
+          .from('provider_history')
+          .insert([historyEntry]);
+      
+        if (historyError) {
+          console.error('Error adding provider history entry:', historyError);
+          throw historyError;
+        }
+      
+        // Update the store state
+        set((state) => ({
+          pendingProviders: state.pendingProviders.filter((p) => p.id !== providerId),
+          providerHistory: [...state.providerHistory, historyEntry],
+        }));
+      },
 
-          return {
-            attendedPatients: [...state.attendedPatients, attendedPatient],
-            notifications: updatedNotifications,
-            providerHistory: [...state.providerHistory, historyEntry],
-          };
-        }),
-      approveProvider: (providerId) =>
-        set((state) => {
-          const providerIndex = state.pendingProviders.findIndex(
-            (p) => p.id === providerId
-          );
-          if (providerIndex === -1) return {};
-
-          const providerToApprove = state.pendingProviders[providerIndex];
-          const updatedPendingProviders = state.pendingProviders.filter(
-            (p) => p.id !== providerId
-          );
-          const updatedUsers = [...state.users, providerToApprove];
-
-          // Add an entry to the provider history
-          const historyEntry = {
-            id: Date.now(),
-            providerId: providerToApprove.id,
-            providerName: providerToApprove.fullName,
-            date: new Date().toLocaleDateString(),
-            action: 'Approved',
-            details: `Provider ${providerToApprove.fullName}'s application was approved`,
-          };
-
-          return {
-            users: updatedUsers,
-            pendingProviders: updatedPendingProviders,
-            providerHistory: [...state.providerHistory, historyEntry],
-          };
-        }),
-
-      rejectProvider: (providerId) =>
-        set((state) => {
-          const providerToReject = state.pendingProviders.find(
-            (p) => p.id === providerId
-          );
-          if (!providerToReject) return {};
-
-          const updatedPendingProviders = state.pendingProviders.filter(
-            (p) => p.id !== providerId
-          );
-
-          // Add an entry to the provider history
-          const historyEntry = {
-            id: Date.now(),
-            providerId: providerToReject.id,
-            providerName: providerToReject.fullName,
-            date: new Date().toLocaleDateString(),
-            action: 'Rejected',
-            details: `Provider ${providerToReject.fullName}'s application was rejected`,
-          };
-
-          return {
-            pendingProviders: updatedPendingProviders,
-            providerHistory: [...state.providerHistory, historyEntry],
-          };
-        }),
-      deleteUser: (userId) =>
+      deleteUser: async (userId) => {
+        // Delete the user from the users table
+        const { error: deleteError } = await supabase
+          .from('users')
+          .delete()
+          .eq('id', userId);
+      
+        if (deleteError) {
+          console.error('Error deleting user:', deleteError);
+          throw deleteError;
+        }
+      
+        // Update the store state
         set((state) => ({
           users: state.users.filter((user) => user.id !== userId),
-        })),
+        }));
+      },
     }));
 
     export default useStore;
