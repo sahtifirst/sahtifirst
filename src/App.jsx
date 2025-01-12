@@ -1,7 +1,7 @@
-import React, { lazy, useState } from 'react';
+import React, { lazy, useState, useEffect } from 'react';
     import { Routes, Route, Navigate } from 'react-router-dom';
     import useStore from './store';
-    import { FaGlobe } from 'react-icons/fa';
+    import { FaGlobe, FaStethoscope } from 'react-icons/fa';
 
     const Registration = lazy(() => import('./components/Registration'));
     const Login = lazy(() => import('./components/Login'));
@@ -24,9 +24,25 @@ import React, { lazy, useState } from 'react';
         setIsLanguageDropdownOpen(false);
       };
 
+      // Set the document title based on the user's role
+      useEffect(() => {
+        if (user) {
+          document.title = t('Sahti First');
+        } else {
+          document.title = t('Sahti First');
+        }
+      }, [user, t]);
+
       return (
         <div className="App">
           <header className="app-header">
+            <div className="app-name-and-logo">
+              {/* Placeholder for the logo */}
+              <div className="logo-placeholder">
+                <FaStethoscope size={36} />
+              </div>
+              <h1>{t('Sahti First')}</h1>
+            </div>
             <div className="language-dropdown">
               <button className="language-button" onClick={toggleLanguageDropdown}>
                 <FaGlobe />
@@ -38,9 +54,6 @@ import React, { lazy, useState } from 'react';
                 </div>
               )}
             </div>
-            {user && user.role !== 'guest' && (
-              <h1 className="app-name">{t('Sahti First')}</h1>
-            )}
           </header>
           <Routes>
             <Route path="/" element={<Navigate to="/login" />} />
