@@ -1,0 +1,21 @@
+{
+      "name": "Sahti First",
+      "short_name": "Sahti First",
+      "description": "A progressive web app for connecting patients and healthcare providers in Algeria.",
+      "start_url": "/",
+      "display": "standalone",
+      "background_color": "#ffffff",
+      "theme_color": "#4CAF50",
+      "icons": [
+        {
+          "src": "/vite.svg",
+          "sizes": "192x192",
+          "type": "image/svg+xml"
+        },
+        {
+          "src": "/vite.svg",
+          "sizes": "512x512",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
